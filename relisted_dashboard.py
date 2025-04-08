@@ -33,7 +33,6 @@ def process_property(home, two_years_ago, filters):
         return None
 
     try:
-        # Lookup property
         detail_url = "https://zillow-com1.p.rapidapi.com/property"
         detail_query = {"zpid": str(zpid)}
         detail_response = requests.get(detail_url, headers=HEADERS, params=detail_query)
@@ -54,23 +53,23 @@ def process_property(home, two_years_ago, filters):
         price = home.get("price") or 0
         if len(listings) >= filters["min_relistings"] and filters["min_price"] <= price <= filters["max_price"] and days_on >= filters["min_days_on_market"]:
             address = home.get("address")
-            time.sleep(1)  # avoid geocoding API rate limit
+            # Geocoding is optional
             lat, lon = geocode_address(address)
-            if lat is not None and lon is not None:
-                return {
-                    "Address": address,
-                    "Price": price,
-                    "Re-Listings (2yrs)": len(listings),
-                    "Days on Zillow": days_on,
-                    "Zillow Link": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
-                    "Latitude": lat,
-                    "Longitude": lon
-                }
+            time.sleep(1)  # avoid rate limiting
+            return {
+                "Address": address,
+                "Price": price,
+                "Re-Listings (2yrs)": len(listings),
+                "Days on Zillow": days_on,
+                "Zillow Link": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
+                "Latitude": lat,
+                "Longitude": lon
+            }
     except:
         return None
     return None
 
-# Main function to get all relisted homes
+# Get relisted homes
 def get_relisted_properties(city, state, page_limit, filters):
     all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
@@ -88,7 +87,6 @@ def get_relisted_properties(city, state, page_limit, filters):
         data = response.json()
         props = data.get("props", [])
 
-        # Multithread property lookups
         with ThreadPoolExecutor(max_workers=10) as executor:
             results = executor.map(lambda home: process_property(home, two_years_ago, filters), props)
             all_props.extend([r for r in results if r])
@@ -98,7 +96,7 @@ def get_relisted_properties(city, state, page_limit, filters):
 # --- Streamlit UI ---
 st.set_page_config(page_title="Re-Listed Homes Finder", layout="wide")
 st.title("🏡 Re-Listed Homes Finder")
-st.write("Find properties listed 2+ times on Zillow in the last 2 years.")
+st.write("Find properties listed multiple times on Zillow in the last 2 years.")
 
 city = st.text_input("Enter City", "Los Angeles")
 state = st.text_input("Enter State Abbreviation (e.g. CA)", "CA")
@@ -126,7 +124,7 @@ filters = {
     "min_days_on_market": min_days_on_market
 }
 
-# Run search
+# Search
 if st.button("Search"):
     with st.spinner("Searching Zillow and processing results..."):
         results = get_relisted_properties(city, state, max_pages, filters)
@@ -143,7 +141,7 @@ if st.button("Search"):
             end = start + page_size
             st.dataframe(df.iloc[start:end])
 
-            # CSV Download
+            # CSV download
             csv = df.drop(columns=["Latitude", "Longitude"]).to_csv(index=False)
             st.download_button(
                 label="📥 Download all results as CSV",
@@ -152,7 +150,7 @@ if st.button("Search"):
                 mime="text/csv"
             )
 
-            # Map
+            # Map View
             map_data = df.dropna(subset=["Latitude", "Longitude"])
             if not map_data.empty:
                 st.markdown("### 🗺️ Map View")
