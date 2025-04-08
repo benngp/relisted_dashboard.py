@@ -57,7 +57,7 @@ def process_property(home, two_years_ago, filters):
 
             return {
                 "Address": address,
-                "Price": price,
+                "Price": f"${price:,.0f}",
                 "Bedrooms": facts.get("bedrooms"),
                 "Bathrooms": facts.get("bathrooms"),
                 "Square Feet": facts.get("livingArea"),
@@ -71,9 +71,10 @@ def process_property(home, two_years_ago, filters):
         return None
     return None
 
-def get_relisted_properties(location, page_limit, filters):
+def get_relisted_properties(city, state, page_limit, filters):
     all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
+    location = f"{city}, {state}" if city else state
 
     for page in range(1, page_limit + 1):
         url = "https://zillow-com1.p.rapidapi.com/propertyExtendedSearch"
@@ -99,7 +100,8 @@ st.set_page_config(page_title="Re-Listed Homes Finder", layout="wide")
 st.title("🏡 Re-Listed Homes Finder")
 st.write("Find properties listed multiple times on Zillow in the last 2 years.")
 
-location = st.text_input("Enter Location (e.g. 'Los Angeles, CA' or 'Texas' or 'United States')", "Los Angeles, CA")
+city = st.text_input("City", "Los Angeles")
+state = st.text_input("State Abbreviation (e.g. CA)", "CA")
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 50, 5)
 
 st.markdown("### Filters")
@@ -125,24 +127,30 @@ filters = {
 
 if st.button("Search"):
     with st.spinner("Searching Zillow and processing results..."):
-        results = get_relisted_properties(location, max_pages, filters)
+        results = get_relisted_properties(city, state, max_pages, filters)
 
         if results:
             df = pd.DataFrame(results)
-            st.success(f"Found {len(df)} re-listed homes in '{location}'.")
+
+            st.success(f"Found {len(df)} re-listed homes in {city}, {state}.")
 
             page_size = 10
             total_pages = (len(df) + page_size - 1) // page_size
             page = st.number_input("Page", 1, total_pages, 1)
             start = (page - 1) * page_size
             end = start + page_size
-            st.dataframe(df.iloc[start:end])
+
+            styled_df = df.iloc[start:end].style.set_properties(**{
+                'text-align': 'center'
+            }).set_table_styles([dict(selector='th', props=[('text-align', 'center')])])
+
+            st.dataframe(styled_df, use_container_width=True)
 
             csv = df.drop(columns=["Latitude", "Longitude"]).to_csv(index=False)
             st.download_button(
                 label="📥 Download all results as CSV",
                 data=csv,
-                file_name=f"relisted_{location.lower().replace(' ', '_')}.csv",
+                file_name=f"relisted_{city.lower()}_{state.lower()}.csv",
                 mime="text/csv"
             )
 
