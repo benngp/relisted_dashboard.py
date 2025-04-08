@@ -26,7 +26,7 @@ def geocode_address(address):
         pass
     return None, None
 
-# Fetch full property details and apply filtering
+# Fetch property details, apply filters, and geocode
 def process_property(home, two_years_ago, filters):
     zpid = home.get("zpid")
     if not zpid:
@@ -53,7 +53,6 @@ def process_property(home, two_years_ago, filters):
         price = home.get("price") or 0
         if len(listings) >= filters["min_relistings"] and filters["min_price"] <= price <= filters["max_price"] and days_on >= filters["min_days_on_market"]:
             address = home.get("address")
-            # Geocoding is optional
             lat, lon = geocode_address(address)
             time.sleep(1)  # avoid rate limiting
             return {
@@ -69,7 +68,7 @@ def process_property(home, two_years_ago, filters):
         return None
     return None
 
-# Get relisted homes
+# Collect all relisted homes using threading
 def get_relisted_properties(city, state, page_limit, filters):
     all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
@@ -154,11 +153,21 @@ if st.button("Search"):
             map_data = df.dropna(subset=["Latitude", "Longitude"])
             if not map_data.empty:
                 st.markdown("### 🗺️ Map View")
+
+                avg_lat = map_data["Latitude"].mean()
+                avg_lon = map_data["Longitude"].mean()
+
+                zoom_level = 10
+                lat_range = map_data["Latitude"].max() - map_data["Latitude"].min()
+                lon_range = map_data["Longitude"].max() - map_data["Longitude"].min()
+                if lat_range > 10 or lon_range > 10:
+                    zoom_level = 4  # Zoomed out for national view
+
                 st.pydeck_chart(pdk.Deck(
                     initial_view_state=pdk.ViewState(
-                        latitude=map_data["Latitude"].mean(),
-                        longitude=map_data["Longitude"].mean(),
-                        zoom=10,
+                        latitude=avg_lat,
+                        longitude=avg_lon,
+                        zoom=zoom_level,
                         pitch=0,
                     ),
                     layers=[
@@ -166,8 +175,8 @@ if st.button("Search"):
                             "ScatterplotLayer",
                             data=map_data,
                             get_position="[Longitude, Latitude]",
-                            get_radius=100,
-                            get_fill_color=[0, 102, 255, 160],
+                            get_radius=200,
+                            get_fill_color=[0, 122, 255, 255],  # Bright blue dots
                             pickable=True,
                         )
                     ],
