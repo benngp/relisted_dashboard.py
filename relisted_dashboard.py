@@ -1,6 +1,8 @@
 import streamlit as st
 import requests
+import pandas as pd
 from datetime import datetime, timedelta
+from io import StringIO
 
 # Your Zillow API headers
 HEADERS = {
@@ -8,7 +10,7 @@ HEADERS = {
     "X-RapidAPI-Host": "zillow-com1.p.rapidapi.com"
 }
 
-def get_relisted_properties(city, state, max_pages):
+def get_relisted_properties(city, state, max_pages, min_relistings, min_price, max_price, min_days_on_market):
     all_relisted = []
     two_years_ago = datetime.now() - timedelta(days=730)
 
@@ -40,39 +42,66 @@ def get_relisted_properties(city, state, max_pages):
 
             price_history = details.get("priceHistory", [])
 
-            # Filter price history for "Listed for sale" events within 2 years
-            recent_listings = [
+            # Filter for "Listed for sale" events in last 2 years
+            listings = [
                 event for event in price_history
                 if event.get("event") == "Listed for sale" and
                    "date" in event and
                    datetime.strptime(event["date"], "%Y-%m-%d") >= two_years_ago
             ]
 
-            if len(recent_listings) >= 2:
+            # Get days on market if available
+            days_on = details.get("resoFacts", {}).get("daysOnZillow", 0)
+
+            if len(listings) >= min_relistings and days_on >= min_days_on_market:
                 address = home.get("address")
-                price = home.get("price")
-                link = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
-                all_relisted.append({
-                    "Address": address,
-                    "Price": f"${price:,}" if price else "N/A",
-                    "Zillow Link": link
-                })
+                price = home.get("price") or 0
+                if min_price <= price <= max_price:
+                    link = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
+                    all_relisted.append({
+                        "Address": address,
+                        "Price": price,
+                        "Re-Listings (2yrs)": len(listings),
+                        "Days on Zillow": days_on,
+                        "Zillow Link": link
+                    })
 
     return all_relisted
 
 # Streamlit UI
 st.title("🏡 Re-Listed Homes Finder")
-st.write("Find properties that have been listed for sale 2+ times on Zillow in the past 2 years.")
+st.write("Find properties that have been listed 2+ times on Zillow in the past 2 years.")
 
+# User inputs
 city = st.text_input("Enter City", "Los Angeles")
 state = st.text_input("Enter State Abbreviation (e.g. CA)", "CA")
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 5, 1)
 
+st.markdown("### Filter Results")
+min_relistings = st.slider("Minimum Number of Re-Listings", 2, 5, 2)
+min_price = st.number_input("Minimum Price ($)", value=100000, step=50000)
+max_price = st.number_input("Maximum Price ($)", value=2000000, step=50000)
+min_days_on_market = st.slider("Minimum Days on Market", 0, 365, 0)
+
 if st.button("Search"):
-    with st.spinner("Looking for re-listed homes..."):
-        results = get_relisted_properties(city, state, max_pages)
+    with st.spinner("Searching for re-listed homes..."):
+        results = get_relisted_properties(
+            city, state, max_pages,
+            min_relistings, min_price, max_price, min_days_on_market
+        )
+
         if results:
-            st.success(f"Found {len(results)} re-listed homes in {city}, {state}.")
-            st.dataframe(results)
+            df = pd.DataFrame(results)
+            st.success(f"Found {len(df)} re-listed homes in {city}, {state}.")
+            st.dataframe(df)
+
+            # CSV download
+            csv = df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download results as CSV",
+                data=csv,
+                file_name=f"relisted_{city.lower()}_{state.lower()}.csv",
+                mime="text/csv"
+            )
         else:
-            st.warning("No re-listed homes found in the last 2 years.")
+            st.warning("No re-listed homes found that match your filters.")
