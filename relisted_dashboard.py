@@ -21,6 +21,34 @@ def get_relisted_properties(city, state, max_pages):
         data = response.json()
 
         for home in data.get("props", []):
+            zpid = home.get("zpid")
+            if not zpid:
+                continue
+
+            # Lookup full property details using /property endpoint
+            detail_url = "https://zillow-com1.p.rapidapi.com/property"
+            detail_query = {"zpid": str(zpid)}
+            detail_response = requests.get(detail_url, headers=HEADERS, params=detail_query)
+            details = detail_response.json()
+
+            price_history = details.get("priceHistory", [])
+            if price_history and len(price_history) > 1:
+                address = home.get("address")
+                price = home.get("price")
+                link = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
+                all_relisted.append({
+                    "Address": address,
+                    "Price": f"${price:,}" if price else "N/A",
+                    "Zillow Link": link
+                })
+
+    return all_relisted
+        }
+
+        response = requests.get(url, headers=HEADERS, params=query)
+        data = response.json()
+
+        for home in data.get("props", []):
             history = home.get("priceHistory", [])
             if history and len(history) > 1:
                 address = home.get("address")
