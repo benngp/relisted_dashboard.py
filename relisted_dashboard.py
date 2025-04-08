@@ -105,7 +105,7 @@ state = st.text_input("State Abbreviation (e.g. CA)", "CA")
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 50, 5)
 
 st.markdown("### Filters")
-min_relistings = st.slider("Minimum Number of Re-Listings", 2, 5, 2)
+min_relistings = st.slider("Minimum Number of Re-Listings", 1, 100, 2)
 min_price_str = st.text_input("Minimum Price ($)", "100,000")
 max_price_str = st.text_input("Maximum Price ($)", "2,000,000")
 
@@ -183,7 +183,12 @@ if st.button("Search"):
                             pickable=True,
                         )
                     ],
-                    tooltip={"text": "{Address}\n${Price}\n{Bedrooms} bed / {Bathrooms} bath\n{Square Feet} sqft"}
+                    tooltip={
+                        "html": "<b>{Address}</b><br>"
+                                "Price: {Price}<br>"
+                                "🛏 {Bedrooms} | 🛁 {Bathrooms} | 📐 {Square Feet} sqft<br>"
+                                "Re-Listings: {Re-Listings (2yrs)}"
+                    }
                 ))
         else:
             st.warning("No matching re-listed homes found.")
