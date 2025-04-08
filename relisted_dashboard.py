@@ -12,7 +12,6 @@ HEADERS = {
     "X-RapidAPI-Host": "zillow-com1.p.rapidapi.com"
 }
 
-# Geocode address
 def geocode_address(address):
     try:
         url = "https://nominatim.openstreetmap.org/search"
@@ -26,7 +25,6 @@ def geocode_address(address):
         pass
     return None, None
 
-# Fetch property details, apply filters, and geocode
 def process_property(home, two_years_ago, filters):
     zpid = home.get("zpid")
     if not zpid:
@@ -41,7 +39,8 @@ def process_property(home, two_years_ago, filters):
         details = detail_response.json()
 
         price_history = details.get("priceHistory", [])
-        days_on = details.get("resoFacts", {}).get("daysOnZillow", 0)
+        facts = details.get("resoFacts", {})
+        days_on = facts.get("daysOnZillow", 0)
 
         listings = [
             event for event in price_history
@@ -55,9 +54,13 @@ def process_property(home, two_years_ago, filters):
             address = home.get("address")
             lat, lon = geocode_address(address)
             time.sleep(1)  # avoid rate limiting
+
             return {
                 "Address": address,
                 "Price": price,
+                "Bedrooms": facts.get("bedrooms"),
+                "Bathrooms": facts.get("bathrooms"),
+                "Square Feet": facts.get("livingArea"),
                 "Re-Listings (2yrs)": len(listings),
                 "Days on Zillow": days_on,
                 "Zillow Link": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
@@ -68,15 +71,14 @@ def process_property(home, two_years_ago, filters):
         return None
     return None
 
-# Collect all relisted homes using threading
-def get_relisted_properties(city, state, page_limit, filters):
+def get_relisted_properties(location, page_limit, filters):
     all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
 
     for page in range(1, page_limit + 1):
         url = "https://zillow-com1.p.rapidapi.com/propertyExtendedSearch"
         query = {
-            "location": f"{city}, {state}",
+            "location": location,
             "status_type": "ForSale",
             "page": str(page)
         }
@@ -97,11 +99,9 @@ st.set_page_config(page_title="Re-Listed Homes Finder", layout="wide")
 st.title("🏡 Re-Listed Homes Finder")
 st.write("Find properties listed multiple times on Zillow in the last 2 years.")
 
-city = st.text_input("Enter City", "Los Angeles")
-state = st.text_input("Enter State Abbreviation (e.g. CA)", "CA")
+location = st.text_input("Enter Location (e.g. 'Los Angeles, CA' or 'Texas' or 'United States')", "Los Angeles, CA")
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 50, 5)
 
-# Filters
 st.markdown("### Filters")
 min_relistings = st.slider("Minimum Number of Re-Listings", 2, 5, 2)
 min_price_str = st.text_input("Minimum Price ($)", "100,000")
@@ -123,16 +123,14 @@ filters = {
     "min_days_on_market": min_days_on_market
 }
 
-# Search
 if st.button("Search"):
     with st.spinner("Searching Zillow and processing results..."):
-        results = get_relisted_properties(city, state, max_pages, filters)
+        results = get_relisted_properties(location, max_pages, filters)
 
         if results:
             df = pd.DataFrame(results)
-            st.success(f"Found {len(df)} re-listed homes in {city}, {state}.")
+            st.success(f"Found {len(df)} re-listed homes in '{location}'.")
 
-            # Pagination
             page_size = 10
             total_pages = (len(df) + page_size - 1) // page_size
             page = st.number_input("Page", 1, total_pages, 1)
@@ -140,20 +138,17 @@ if st.button("Search"):
             end = start + page_size
             st.dataframe(df.iloc[start:end])
 
-            # CSV download
             csv = df.drop(columns=["Latitude", "Longitude"]).to_csv(index=False)
             st.download_button(
                 label="📥 Download all results as CSV",
                 data=csv,
-                file_name=f"relisted_{city.lower()}_{state.lower()}.csv",
+                file_name=f"relisted_{location.lower().replace(' ', '_')}.csv",
                 mime="text/csv"
             )
 
-            # Map View
             map_data = df.dropna(subset=["Latitude", "Longitude"])
             if not map_data.empty:
                 st.markdown("### 🗺️ Map View")
-
                 avg_lat = map_data["Latitude"].mean()
                 avg_lon = map_data["Longitude"].mean()
 
@@ -161,7 +156,7 @@ if st.button("Search"):
                 lat_range = map_data["Latitude"].max() - map_data["Latitude"].min()
                 lon_range = map_data["Longitude"].max() - map_data["Longitude"].min()
                 if lat_range > 10 or lon_range > 10:
-                    zoom_level = 4  # Zoomed out for national view
+                    zoom_level = 4
 
                 st.pydeck_chart(pdk.Deck(
                     initial_view_state=pdk.ViewState(
@@ -176,11 +171,11 @@ if st.button("Search"):
                             data=map_data,
                             get_position="[Longitude, Latitude]",
                             get_radius=200,
-                            get_fill_color=[0, 122, 255, 255],  # Bright blue dots
+                            get_fill_color=[0, 122, 255, 255],
                             pickable=True,
                         )
                     ],
-                    tooltip={"text": "{Address}\n${Price}\nRe-Listings: {Re-Listings (2yrs)}"}
+                    tooltip={"text": "{Address}\n${Price}\n{Bedrooms} bed / {Bathrooms} bath\n{Square Feet} sqft"}
                 ))
         else:
             st.warning("No matching re-listed homes found.")
