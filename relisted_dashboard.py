@@ -43,26 +43,8 @@ def get_relisted_properties(city, state, max_pages):
                 })
 
     return all_relisted
-        }
 
-        response = requests.get(url, headers=HEADERS, params=query)
-        data = response.json()
-
-        for home in data.get("props", []):
-            history = home.get("priceHistory", [])
-            if history and len(history) > 1:
-                address = home.get("address")
-                price = home.get("price")
-                zpid = home.get("zpid")
-                url = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
-                all_relisted.append({
-                    "Address": address,
-                    "Price": f"${price:,}",
-                    "Zillow Link": url
-                })
-
-    return all_relisted
-
+# Streamlit UI
 st.title("🏡 Re-Listed Homes Finder")
 st.write("Find properties that have been re-listed on Zillow.")
 
