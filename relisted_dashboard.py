@@ -3,6 +3,8 @@ import requests
 import pandas as pd
 import pydeck as pdk
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 # Zillow API headers
 HEADERS = {
@@ -10,25 +12,67 @@ HEADERS = {
     "X-RapidAPI-Host": "zillow-com1.p.rapidapi.com"
 }
 
-# Geocode address to get lat/lon (via Nominatim)
+# Geocode address
 def geocode_address(address):
     try:
         url = "https://nominatim.openstreetmap.org/search"
-        params = {
-            "q": address,
-            "format": "json"
-        }
-        response = requests.get(url, params=params)
+        params = {"q": address, "format": "json"}
+        headers = {"User-Agent": "relisted-map-app"}
+        response = requests.get(url, params=params, headers=headers)
         if response.status_code == 200 and response.json():
             data = response.json()[0]
             return float(data["lat"]), float(data["lon"])
     except Exception:
-        return None, None
+        pass
     return None, None
 
-# Get re-listed homes from Zillow
-def get_relisted_properties(city, state, page_limit, min_relistings, min_price, max_price, min_days_on_market):
-    all_relisted = []
+# Fetch full property details and apply filtering
+def process_property(home, two_years_ago, filters):
+    zpid = home.get("zpid")
+    if not zpid:
+        return None
+
+    try:
+        # Lookup property
+        detail_url = "https://zillow-com1.p.rapidapi.com/property"
+        detail_query = {"zpid": str(zpid)}
+        detail_response = requests.get(detail_url, headers=HEADERS, params=detail_query)
+        if detail_response.status_code != 200:
+            return None
+        details = detail_response.json()
+
+        price_history = details.get("priceHistory", [])
+        days_on = details.get("resoFacts", {}).get("daysOnZillow", 0)
+
+        listings = [
+            event for event in price_history
+            if event.get("event") == "Listed for sale" and
+               "date" in event and
+               datetime.strptime(event["date"], "%Y-%m-%d") >= two_years_ago
+        ]
+
+        price = home.get("price") or 0
+        if len(listings) >= filters["min_relistings"] and filters["min_price"] <= price <= filters["max_price"] and days_on >= filters["min_days_on_market"]:
+            address = home.get("address")
+            time.sleep(1)  # avoid geocoding API rate limit
+            lat, lon = geocode_address(address)
+            if lat is not None and lon is not None:
+                return {
+                    "Address": address,
+                    "Price": price,
+                    "Re-Listings (2yrs)": len(listings),
+                    "Days on Zillow": days_on,
+                    "Zillow Link": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
+                    "Latitude": lat,
+                    "Longitude": lon
+                }
+    except:
+        return None
+    return None
+
+# Main function to get all relisted homes
+def get_relisted_properties(city, state, page_limit, filters):
+    all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
 
     for page in range(1, page_limit + 1):
@@ -38,66 +82,31 @@ def get_relisted_properties(city, state, page_limit, min_relistings, min_price, 
             "status_type": "ForSale",
             "page": str(page)
         }
-
         response = requests.get(url, headers=HEADERS, params=query)
         if response.status_code != 200:
             continue
         data = response.json()
+        props = data.get("props", [])
 
-        for home in data.get("props", []):
-            zpid = home.get("zpid")
-            if not zpid:
-                continue
+        # Multithread property lookups
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            results = executor.map(lambda home: process_property(home, two_years_ago, filters), props)
+            all_props.extend([r for r in results if r])
 
-            # Lookup full property details
-            detail_url = "https://zillow-com1.p.rapidapi.com/property"
-            detail_query = {"zpid": str(zpid)}
-            detail_response = requests.get(detail_url, headers=HEADERS, params=detail_query)
-            if detail_response.status_code != 200:
-                continue
-            details = detail_response.json()
+    return all_props
 
-            price_history = details.get("priceHistory", [])
-            days_on = details.get("resoFacts", {}).get("daysOnZillow", 0)
-
-            listings = [
-                event for event in price_history
-                if event.get("event") == "Listed for sale" and
-                   "date" in event and
-                   datetime.strptime(event["date"], "%Y-%m-%d") >= two_years_ago
-            ]
-
-            price = home.get("price") or 0
-            if len(listings) >= min_relistings and min_price <= price <= max_price and days_on >= min_days_on_market:
-                address = home.get("address")
-                lat, lon = geocode_address(address)
-                link = f"https://www.zillow.com/homedetails/{zpid}_zpid/"
-                all_relisted.append({
-                    "Address": address,
-                    "Price": price,
-                    "Re-Listings (2yrs)": len(listings),
-                    "Days on Zillow": days_on,
-                    "Zillow Link": link,
-                    "Latitude": lat,
-                    "Longitude": lon
-                })
-
-    return all_relisted
-
-# --- Streamlit App ---
+# --- Streamlit UI ---
 st.set_page_config(page_title="Re-Listed Homes Finder", layout="wide")
 st.title("🏡 Re-Listed Homes Finder")
-st.write("Find properties listed multiple times on Zillow in the last 2 years.")
+st.write("Find properties listed 2+ times on Zillow in the last 2 years.")
 
-# Inputs
 city = st.text_input("Enter City", "Los Angeles")
 state = st.text_input("Enter State Abbreviation (e.g. CA)", "CA")
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 50, 5)
 
+# Filters
 st.markdown("### Filters")
 min_relistings = st.slider("Minimum Number of Re-Listings", 2, 5, 2)
-
-# Format-friendly price inputs
 min_price_str = st.text_input("Minimum Price ($)", "100,000")
 max_price_str = st.text_input("Maximum Price ($)", "2,000,000")
 
@@ -110,18 +119,21 @@ except ValueError:
 
 min_days_on_market = st.slider("Minimum Days on Market", 0, 365, 0)
 
-# Search and results
+filters = {
+    "min_relistings": min_relistings,
+    "min_price": min_price,
+    "max_price": max_price,
+    "min_days_on_market": min_days_on_market
+}
+
+# Run search
 if st.button("Search"):
-    with st.spinner("Looking for re-listed homes..."):
-        results = get_relisted_properties(
-            city, state, max_pages,
-            min_relistings, min_price, max_price, min_days_on_market
-        )
+    with st.spinner("Searching Zillow and processing results..."):
+        results = get_relisted_properties(city, state, max_pages, filters)
 
         if results:
             df = pd.DataFrame(results)
-
-            st.success(f"Found {len(df)} matching homes.")
+            st.success(f"Found {len(df)} re-listed homes in {city}, {state}.")
 
             # Pagination
             page_size = 10
@@ -131,7 +143,7 @@ if st.button("Search"):
             end = start + page_size
             st.dataframe(df.iloc[start:end])
 
-            # Download CSV
+            # CSV Download
             csv = df.drop(columns=["Latitude", "Longitude"]).to_csv(index=False)
             st.download_button(
                 label="📥 Download all results as CSV",
@@ -140,7 +152,7 @@ if st.button("Search"):
                 mime="text/csv"
             )
 
-            # Map View
+            # Map
             map_data = df.dropna(subset=["Latitude", "Longitude"])
             if not map_data.empty:
                 st.markdown("### 🗺️ Map View")
@@ -157,11 +169,11 @@ if st.button("Search"):
                             data=map_data,
                             get_position="[Longitude, Latitude]",
                             get_radius=100,
-                            get_fill_color=[200, 30, 0, 160],
+                            get_fill_color=[0, 102, 255, 160],
                             pickable=True,
                         )
                     ],
                     tooltip={"text": "{Address}\n${Price}\nRe-Listings: {Re-Listings (2yrs)}"}
                 ))
         else:
-            st.warning("No re-listed homes found with those filters.")
+            st.warning("No matching re-listed homes found.")
