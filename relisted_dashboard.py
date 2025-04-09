@@ -5,6 +5,7 @@ import pydeck as pdk
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import time
+from io import BytesIO
 
 # Zillow API headers
 HEADERS = {
@@ -41,6 +42,7 @@ def process_property(home, two_years_ago, filters):
         price_history = details.get("priceHistory", [])
         facts = details.get("resoFacts", {})
         days_on = facts.get("daysOnZillow", 0)
+        image_url = details.get("imgSrc", "")
 
         listings = [
             event for event in price_history
@@ -51,7 +53,7 @@ def process_property(home, two_years_ago, filters):
 
         price = home.get("price") or 0
         if len(listings) >= filters["min_relistings"] and filters["min_price"] <= price <= filters["max_price"] and days_on >= filters["min_days_on_market"]:
-            original_price = listings[-1].get("price") if listings else None  # earliest listing
+            original_price = listings[-1].get("price") if listings else None
             price_diff = price - original_price if original_price else None
             percent_diff = ((price - original_price) / original_price * 100) if original_price and original_price != 0 else None
 
@@ -60,16 +62,18 @@ def process_property(home, two_years_ago, filters):
             time.sleep(1)
 
             return {
+                "Image": f"![img]({image_url})" if image_url else "",
                 "Address": address,
                 "Price": f"${price:,.0f}",
-                "Price Change ($)": f"${price_diff:,.0f}" if price_diff is not None else "N/A",
-                "Price Change (%)": f"{percent_diff:.1f}%" if percent_diff is not None else "N/A",
+                "Price Change ($)": f"${price_diff:,.0f}" if price_diff else "N/A",
+                "Price Change (%)": f"{percent_diff:.1f}%" if percent_diff else "N/A",
                 "Bedrooms": facts.get("bedrooms"),
                 "Bathrooms": facts.get("bathrooms"),
                 "Square Feet": facts.get("livingArea"),
                 "Re-Listings (2yrs)": len(listings),
                 "Days on Zillow": days_on,
-                "Zillow Link": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
+                "Zillow Link": f"[🔗 View Listing](https://www.zillow.com/homedetails/{zpid}_zpid/)",
+                "Raw Zillow URL": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
                 "Latitude": lat,
                 "Longitude": lon
             }
@@ -132,7 +136,6 @@ filters = {
     "min_days_on_market": min_days_on_market
 }
 
-# Determine location
 location = zip_code if zip_code else f"{city}, {state}"
 
 if st.button("Search"):
@@ -141,7 +144,6 @@ if st.button("Search"):
 
         if results:
             df = pd.DataFrame(results)
-
             st.success(f"Found {len(df)} re-listed homes in {location}.")
 
             page_size = 10
@@ -150,26 +152,23 @@ if st.button("Search"):
             start = (page - 1) * page_size
             end = start + page_size
 
-            styled_df = df.iloc[start:end].style.set_properties(**{
-                'text-align': 'center'
-            }).set_table_styles([dict(selector='th', props=[('text-align', 'center')])])
+            st.markdown("### 📋 Results")
+            st.markdown(df.iloc[start:end].to_markdown(index=False), unsafe_allow_html=True)
 
-            st.dataframe(styled_df, use_container_width=True)
+            # Excel export (with raw URL)
+            excel_df = df.drop(columns=["Latitude", "Longitude", "Image"])
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                excel_df.to_excel(writer, index=False, sheet_name="Re-Listed Homes")
+                writer.save()
+            st.download_button("📥 Download as Excel", data=output.getvalue(), file_name="relisted_properties.xlsx", mime="application/vnd.ms-excel")
 
-            csv = df.drop(columns=["Latitude", "Longitude"]).to_csv(index=False)
-            st.download_button(
-                label="📥 Download all results as CSV",
-                data=csv,
-                file_name=f"relisted_{location.lower().replace(' ', '_')}.csv",
-                mime="text/csv"
-            )
-
+            # Map
             map_data = df.dropna(subset=["Latitude", "Longitude"])
             if not map_data.empty:
                 st.markdown("### 🗺️ Map View")
                 avg_lat = map_data["Latitude"].mean()
                 avg_lon = map_data["Longitude"].mean()
-
                 zoom_level = 10
                 lat_range = map_data["Latitude"].max() - map_data["Latitude"].min()
                 lon_range = map_data["Longitude"].max() - map_data["Longitude"].min()
