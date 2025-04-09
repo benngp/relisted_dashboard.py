@@ -51,13 +51,19 @@ def process_property(home, two_years_ago, filters):
 
         price = home.get("price") or 0
         if len(listings) >= filters["min_relistings"] and filters["min_price"] <= price <= filters["max_price"] and days_on >= filters["min_days_on_market"]:
+            original_price = listings[-1].get("price") if listings else None  # earliest listing
+            price_diff = price - original_price if original_price else None
+            percent_diff = ((price - original_price) / original_price * 100) if original_price and original_price != 0 else None
+
             address = home.get("address")
             lat, lon = geocode_address(address)
-            time.sleep(1)  # avoid rate limiting
+            time.sleep(1)
 
             return {
                 "Address": address,
                 "Price": f"${price:,.0f}",
+                "Price Change ($)": f"${price_diff:,.0f}" if price_diff is not None else "N/A",
+                "Price Change (%)": f"{percent_diff:.1f}%" if percent_diff is not None else "N/A",
                 "Bedrooms": facts.get("bedrooms"),
                 "Bathrooms": facts.get("bathrooms"),
                 "Square Feet": facts.get("livingArea"),
@@ -71,10 +77,9 @@ def process_property(home, two_years_ago, filters):
         return None
     return None
 
-def get_relisted_properties(city, state, page_limit, filters):
+def get_relisted_properties(location, page_limit, filters):
     all_props = []
     two_years_ago = datetime.now() - timedelta(days=730)
-    location = f"{city}, {state}" if city else state
 
     for page in range(1, page_limit + 1):
         url = "https://zillow-com1.p.rapidapi.com/propertyExtendedSearch"
@@ -100,10 +105,12 @@ st.set_page_config(page_title="Re-Listed Homes Finder", layout="wide")
 st.title("🏡 Re-Listed Homes Finder")
 st.write("Find properties listed multiple times on Zillow in the last 2 years.")
 
-city = st.text_input("City", "Los Angeles")
-state = st.text_input("State Abbreviation (e.g. CA)", "CA")
+zip_code = st.text_input("ZIP Code (optional)", "")
+city = st.text_input("City", "Los Angeles") if not zip_code else ""
+state = st.text_input("State Abbreviation (e.g. CA)", "CA") if not zip_code else ""
 max_pages = st.slider("How many Zillow pages to search? (1 page ≈ 40 homes)", 1, 50, 5)
 
+# Filters
 st.markdown("### Filters")
 min_relistings = st.slider("Minimum Number of Re-Listings", 1, 100, 2)
 min_price_str = st.text_input("Minimum Price ($)", "100,000")
@@ -125,14 +132,17 @@ filters = {
     "min_days_on_market": min_days_on_market
 }
 
+# Determine location
+location = zip_code if zip_code else f"{city}, {state}"
+
 if st.button("Search"):
-    with st.spinner("Searching Zillow and processing results..."):
-        results = get_relisted_properties(city, state, max_pages, filters)
+    with st.spinner(f"Searching Zillow in {location}..."):
+        results = get_relisted_properties(location, max_pages, filters)
 
         if results:
             df = pd.DataFrame(results)
 
-            st.success(f"Found {len(df)} re-listed homes in {city}, {state}.")
+            st.success(f"Found {len(df)} re-listed homes in {location}.")
 
             page_size = 10
             total_pages = (len(df) + page_size - 1) // page_size
@@ -150,7 +160,7 @@ if st.button("Search"):
             st.download_button(
                 label="📥 Download all results as CSV",
                 data=csv,
-                file_name=f"relisted_{city.lower()}_{state.lower()}.csv",
+                file_name=f"relisted_{location.lower().replace(' ', '_')}.csv",
                 mime="text/csv"
             )
 
@@ -186,9 +196,10 @@ if st.button("Search"):
                     tooltip={
                         "html": "<b>{Address}</b><br>"
                                 "Price: {Price}<br>"
+                                "Change: {Price Change ($)} ({Price Change (%)})<br>"
                                 "🛏 {Bedrooms} | 🛁 {Bathrooms} | 📐 {Square Feet} sqft<br>"
                                 "Re-Listings: {Re-Listings (2yrs)}"
                     }
                 ))
         else:
-            st.warning("No matching re-listed homes found.")
+            st.warning(f"No matching re-listed homes found in {location}.")
