@@ -42,7 +42,6 @@ def process_property(home, two_years_ago, filters):
         price_history = details.get("priceHistory", [])
         facts = details.get("resoFacts", {})
         days_on = facts.get("daysOnZillow", 0)
-        image_url = details.get("imgSrc", "")
 
         listings = [
             event for event in price_history
@@ -62,7 +61,6 @@ def process_property(home, two_years_ago, filters):
             time.sleep(1)
 
             return {
-                "Image": f"![img]({image_url})" if image_url else "",
                 "Address": address,
                 "Price": f"${price:,.0f}",
                 "Price Change ($)": f"${price_diff:,.0f}" if price_diff else "N/A",
@@ -72,8 +70,7 @@ def process_property(home, two_years_ago, filters):
                 "Square Feet": facts.get("livingArea"),
                 "Re-Listings (2yrs)": len(listings),
                 "Days on Zillow": days_on,
-                "Zillow Link": f"[🔗 View Listing](https://www.zillow.com/homedetails/{zpid}_zpid/)",
-                "Raw Zillow URL": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
+                "Zillow URL": f"https://www.zillow.com/homedetails/{zpid}_zpid/",
                 "Latitude": lat,
                 "Longitude": lon
             }
@@ -153,14 +150,25 @@ if st.button("Search"):
             end = start + page_size
 
             st.markdown("### 📋 Results")
-            st.markdown(df.iloc[start:end].to_markdown(index=False), unsafe_allow_html=True)
+            for _, row in df.iloc[start:end].iterrows():
+                st.markdown(f"""
+**🏠 {row['Address']}**
 
-            # Excel export (with raw URL)
-            excel_df = df.drop(columns=["Latitude", "Longitude", "Image"])
+💵 Price: {row['Price']}  
+📉 Price Change: {row['Price Change ($)']} ({row['Price Change (%)']})  
+🔁 Re-Listings: {row['Re-Listings (2yrs)']} | 🕒 Days on Zillow: {row['Days on Zillow']}  
+🛏 {row['Bedrooms']} | 🛁 {row['Bathrooms']} | 📐 {row['Square Feet']} sqft  
+🔗 [View on Zillow]({row['Zillow URL']})
+
+---
+""", unsafe_allow_html=True)
+
+            # Excel download
+            excel_df = df.drop(columns=["Latitude", "Longitude"])
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                 excel_df.to_excel(writer, index=False, sheet_name="Re-Listed Homes")
-                writer.save()
+                writer.close()
             st.download_button("📥 Download as Excel", data=output.getvalue(), file_name="relisted_properties.xlsx", mime="application/vnd.ms-excel")
 
             # Map
